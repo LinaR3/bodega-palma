@@ -1,0 +1,27 @@
+[Unit]
+Description=Bodega Palma API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=bodega
+Group=bodega
+WorkingDirectory=/opt/bodega/backend
+EnvironmentFile=/etc/bodega/bodega.env
+Environment=PYTHONPATH=/opt/bodega/backend
+ExecStartPre=/opt/bodega/backend/.venv/bin/alembic upgrade head
+ExecStart=/opt/bodega/backend/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --proxy-headers
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+KillSignal=SIGINT
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/bodega /var/log/bodega
+
+[Install]
+WantedBy=multi-user.target

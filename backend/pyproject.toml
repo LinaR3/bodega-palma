@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "bodega-palma-api"
+version = "0.1.0"
+description = "Inventario local para bodega de extractora de palma"
+requires-python = ">=3.11"
+dependencies = [
+  "fastapi>=0.115,<1", "uvicorn[standard]>=0.30,<1", "sqlalchemy>=2.0,<3",
+  "alembic>=1.13,<2", "pydantic>=2.8,<3", "pydantic-settings>=2.4,<3",
+  "argon2-cffi>=23.1,<26", "openpyxl>=3.1,<4", "reportlab>=4.2,<5", "qrcode[pil]>=7.4,<9",
+  "python-multipart>=0.0.9,<1",
+]
+
+[project.optional-dependencies]
+test = ["pytest>=8,<9", "httpx>=0.27,<1"]
+postgres = ["psycopg[binary]>=3.2,<4"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.setuptools.packages.find]
+where = ["."]

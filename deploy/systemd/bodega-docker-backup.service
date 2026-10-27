@@ -1,0 +1,9 @@
+[Unit]
+Description=Consistent Docker Bodega Palma backup
+Requires=docker.service
+After=docker.service
+RequiresMountsFor=/mnt/bodega-backups
+
+[Service]
+Type=oneshot
+ExecStart=/opt/bodega/deploy/backup/run-docker-backup.sh

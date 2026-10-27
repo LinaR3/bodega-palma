@@ -1,0 +1,53 @@
+services:
+  api:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    restart: unless-stopped
+    stop_grace_period: 30s
+    environment:
+      DATABASE_URL: sqlite:////data/bodega.db
+      CORS_ORIGINS: https://bodega.planta
+      APP_TIMEZONE: America/Bogota
+      LOG_FILE: /data/logs/bodega.log
+      BACKUP_DIR: /backups
+      BACKUP_RETENTION_DAYS: ${BACKUP_RETENTION_DAYS:-30}
+    volumes:
+      - bodega-data:/data
+      - type: bind
+        source: ${BACKUP_HOST_DIR:-/mnt/bodega-backups}
+        target: /backups
+        bind: { create_host_path: false }
+    expose:
+      - "8000"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+  web:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    restart: unless-stopped
+    depends_on:
+      api: { condition: service_healthy }
+    ports:
+      - "443:443"
+    volumes:
+      - ./certs:/etc/caddy/certs:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    logging:
+      driver: json-file
+      options: { max-size: "10m", max-file: "5" }
+
+volumes:
+  bodega-data:
+  caddy-data:
+  caddy-config:

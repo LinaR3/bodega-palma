@@ -1,0 +1,11 @@
+[Unit]
+Description=Nightly Docker Bodega Palma backup
+
+[Timer]
+OnCalendar=*-*-* 02:00:00
+Persistent=true
+RandomizedDelaySec=10m
+Unit=bodega-docker-backup.service
+
+[Install]
+WantedBy=timers.target

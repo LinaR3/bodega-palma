@@ -1,0 +1,91 @@
+import { useCallback, useEffect, useState } from 'react'
+
+async function request(path, init = {}) {
+  const response = await fetch(`/api${path}`, { ...init, headers: {
+    Authorization: `Bearer ${localStorage.getItem('bodega-token')}`,
+    ...(init.body ? { 'Content-Type': 'application/json' } : {}), ...init.headers
+  } })
+  if (!response.ok) throw new Error(`Error ${response.status}: ${await response.text()}`)
+  return response.json()
+}
+
+function StockBadge({ state }) { return <span className={`badge ${state.toLowerCase()}`}>{state}</span> }
+
+export default function Dashboard({ onBack }) {
+  const [data, setData] = useState(null)
+  const [error, setError] = useState('')
+  const [query, setQuery] = useState('')
+  const [category, setCategory] = useState('')
+  const [from, setFrom] = useState('')
+  const [to, setTo] = useState('')
+  const [filter, setFilter] = useState({})
+  const [busy, setBusy] = useState(false)
+  const [receiving, setReceiving] = useState({})
+
+  const refresh = useCallback(async () => {
+    try {
+      const params = new URLSearchParams()
+      if (filter.q) params.set('q', filter.q)
+      if (filter.categoria) params.set('categoria', filter.categoria)
+      if (filter.desde) params.set('desde', new Date(`${filter.desde}T00:00:00-05:00`).toISOString())
+      if (filter.hasta) params.set('hasta', new Date(`${filter.hasta}T23:59:59-05:00`).toISOString())
+      const result = await request(`/dashboard/resumen?${params}`)
+      setData(result); setError('')
+    } catch (e) { setError(e.message) }
+  }, [filter])
+
+  useEffect(() => {
+    refresh()
+    const timer = setInterval(refresh, 5000)
+    return () => clearInterval(timer)
+  }, [refresh])
+
+  async function resolve(id) {
+    setBusy(true)
+    try { await request(`/discrepancias/${id}/resolver`, { method: 'POST' }); await refresh() }
+    catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  async function transition(alert, estado) {
+    setBusy(true)
+    try {
+      const body = { estado }
+      if (estado === 'PEDIDO') body.cantidad_pedida = alert.cantidad_sugerida
+      if (estado === 'RECIBIDO') {
+        const pending = Number(alert.cantidad_pedida) - Number(alert.cantidad_recibida)
+        const quantity = Number(receiving[alert.id] || pending)
+        if (!Number.isSafeInteger(quantity) || quantity <= 0 || quantity > pending) throw new Error('Cantidad recibida inválida')
+        body.cantidad_recibida = quantity
+        body.uuid_movimiento = crypto.randomUUID()
+        body.dispositivo = 'panel administrador'
+      }
+      await request(`/alertas/${alert.id}/transicion`, { method: 'POST', body: JSON.stringify(body) })
+      await refresh()
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  if (!data && error) return <main className="dashboard"><button onClick={onBack}>Volver</button><p className="notice">{error}</p></main>
+  return <main className="dashboard">
+    <header><div><h1>Panel de bodega</h1><span>Actualización automática cada 5 segundos</span></div><button className="small" onClick={onBack}>Volver</button></header>
+    {error && <p className="notice">{error}</p>}
+    <form className="filters" onSubmit={e => { e.preventDefault(); setFilter({ q: query.trim(), categoria: category, desde: from, hasta: to }) }}>
+      <label>Producto o código<input value={query} onChange={e => setQuery(e.target.value)} placeholder="Buscar" /></label>
+      <label>Categoría<select value={category} onChange={e => setCategory(e.target.value)}><option value="">Todas</option>{(data?.categorias || []).map(c => <option key={c}>{c}</option>)}</select></label>
+      <label>Desde<input type="date" value={from} onChange={e => setFrom(e.target.value)} /></label>
+      <label>Hasta<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
+      <button className="primary">Aplicar filtros</button>
+    </form>
+    <nav className="exports"><a href="/api/exportar/pedidos.pdf" target="_blank">Pedidos PDF</a><a href="/api/exportar/pedidos.xlsx">Pedidos Excel</a><a href="/api/etiquetas.pdf" target="_blank">Etiquetas QR</a></nav>
+    {data && <>
+      <section className="statrow">{Object.entries(data.conteos).map(([key, value]) => <article key={key} className={`stat ${key.toLowerCase()}`}><strong>{value}</strong><span>{key}</span></article>)}</section>
+      <section className="dashgrid">
+        <article><h2>Críticos ({data.criticos.length})</h2><div className="tablewrap"><table><thead><tr><th>Producto</th><th>Código</th><th>Stock</th><th>Rango</th><th>Estado</th></tr></thead><tbody>{data.criticos.map(p => <tr key={p.id}><td>{p.nombre}</td><td>{p.codigo_qr}</td><td>{p.stock_actual} {p.unidad_medida}</td><td>{p.stock_minimo}–{p.stock_maximo}</td><td><StockBadge state={p.estado} /></td></tr>)}</tbody></table></div></article>
+        <article><h2>Pedidos pendientes ({data.alertas.length})</h2><div className="tablewrap"><table><thead><tr><th>Producto</th><th>Estado</th><th>Sugerido</th><th>Pedido / recibido</th><th>Acción</th></tr></thead><tbody>{data.alertas.map(a => <tr key={a.id}><td>{a.producto}</td><td>{a.estado}</td><td>{a.cantidad_sugerida}</td><td>{a.cantidad_pedida} / {a.cantidad_recibida}</td><td>{a.estado === 'SUGERIDO' && <button disabled={busy} onClick={() => transition(a, 'APROBADO')}>Aprobar</button>}{a.estado === 'APROBADO' && <button disabled={busy} onClick={() => transition(a, 'PEDIDO')}>Registrar pedido</button>}{a.estado === 'PEDIDO' && <div className="receive"><input aria-label={`Cantidad recibida ${a.producto}`} type="number" min="1" max={Number(a.cantidad_pedida) - Number(a.cantidad_recibida)} step="1" value={receiving[a.id] ?? (Number(a.cantidad_pedida) - Number(a.cantidad_recibida))} onChange={e => setReceiving({ ...receiving, [a.id]: e.target.value })}/><button disabled={busy} onClick={() => transition(a, 'RECIBIDO')}>Recibir</button></div>}</td></tr>)}</tbody></table></div></article>
+        <article><h2>Discrepancias abiertas ({data.discrepancias.length})</h2>{data.discrepancias.length === 0 ? <p>Sin discrepancias abiertas.</p> : <div className="tablewrap"><table><thead><tr><th>Producto</th><th>Detalle</th><th>Acción</th></tr></thead><tbody>{data.discrepancias.map(d => <tr key={d.id}><td>{d.producto}<br/><small>{d.codigo_qr}</small></td><td>{d.detalle}</td><td><button disabled={busy} onClick={() => resolve(d.id)}>Resolver</button></td></tr>)}</tbody></table></div>}</article>
+        <article><h2>Movimientos recientes</h2><div className="tablewrap"><table><thead><tr><th>Fecha servidor</th><th>Producto</th><th>Tipo</th><th>Cambio</th><th>Usuario</th><th>Área</th></tr></thead><tbody>{data.movimientos.map(m => <tr key={m.id}><td>{new Date(m.fecha_servidor).toLocaleString('es-CO', { timeZone: 'America/Bogota' })}</td><td>{m.producto}</td><td>{m.tipo}</td><td>{m.cantidad_cambio}</td><td>{m.usuario}</td><td>{m.destino_area || '—'}</td></tr>)}</tbody></table></div></article>
+      </section>
+    </>}
+  </main>
+}

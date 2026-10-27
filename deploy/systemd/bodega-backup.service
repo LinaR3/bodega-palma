@@ -1,0 +1,12 @@
+[Unit]
+Description=Consistent backup of Bodega Palma inventory
+RequiresMountsFor=/mnt/bodega-backups
+
+[Service]
+Type=oneshot
+User=bodega
+Group=bodega
+WorkingDirectory=/opt/bodega
+EnvironmentFile=/etc/bodega/bodega.env
+Environment=PYTHONPATH=/opt/bodega/backend
+ExecStart=/opt/bodega/deploy/backup/run-host-backup.sh
