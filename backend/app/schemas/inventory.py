@@ -140,6 +140,21 @@ class AlertaOut(BaseModel):
     cantidad_sugerida: Decimal
     cantidad_pedida: Decimal
     cantidad_recibida: Decimal
+    es_manual: bool = False
+    observacion: str | None = None
+
+
+class PedidoManualCreate(BaseModel):
+    producto_id: int = Field(gt=0)
+    cantidad: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+    observacion: str | None = Field(default=None, max_length=300)
+
+    @field_validator("cantidad")
+    @classmethod
+    def whole_quantity(cls, value):
+        if value != value.to_integral_value():
+            raise ValueError("La cantidad del pedido debe ser entera")
+        return value
 
 
 class AlertaTransicion(BaseModel):

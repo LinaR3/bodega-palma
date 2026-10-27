@@ -141,6 +141,34 @@ def test_demo_seed_adds_initial_stock_as_audited_movements_and_is_idempotent(db_
         db.close()
 
 
+def test_admin_can_create_manual_purchase_order_without_critical_stock(client, product_payload):
+    product = client.post("/api/productos", json=product_payload).json()
+    created = client.post("/api/pedidos/manuales", json={"producto_id": product["id"], "cantidad": 6,
+        "observacion": "Mantenimiento programado"})
+    assert created.status_code == 201
+    order = created.json()
+    assert order["estado"] == "SUGERIDO" and order["es_manual"] is True
+    assert order["cantidad_sugerida"] == "6.000" and order["observacion"] == "Mantenimiento programado"
+    dashboard = client.get("/api/dashboard/resumen").json()
+    assert dashboard["alertas"][0]["es_manual"] is True
+    # A second manual request updates the open draft instead of duplicating it.
+    updated = client.post("/api/pedidos/manuales", json={"producto_id": product["id"], "cantidad": 4})
+    assert updated.status_code == 201 and updated.json()["id"] == order["id"]
+    assert updated.json()["cantidad_sugerida"] == "4.000"
+    assert len(client.get("/api/alertas").json()) == 1
+
+
+def test_manual_order_rejects_fractional_quantity_and_existing_in_transit_order(client, product_payload):
+    product = client.post("/api/productos", json=product_payload).json()
+    invalid = client.post("/api/pedidos/manuales", json={"producto_id": product["id"], "cantidad": "1.5"})
+    assert invalid.status_code == 422
+    order = client.post("/api/pedidos/manuales", json={"producto_id": product["id"], "cantidad": 3}).json()
+    client.post(f"/api/alertas/{order['id']}/transicion", json={"estado": "APROBADO"})
+    client.post(f"/api/alertas/{order['id']}/transicion", json={"estado": "PEDIDO", "cantidad_pedida": 3})
+    conflict = client.post("/api/pedidos/manuales", json={"producto_id": product["id"], "cantidad": 2})
+    assert conflict.status_code == 409
+
+
 def test_bodeguero_is_forbidden_from_admin_endpoints(client):
     product = client.post("/api/productos", json={"codigo_qr": "PAL-008888", "nombre": "Producto",
         "categoria": "X", "ubicacion": "A", "unidad_medida": "unidad", "stock_minimo": 1, "stock_maximo": 5}).json()

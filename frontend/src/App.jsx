@@ -6,6 +6,17 @@ import Dashboard from './Dashboard'
 const API = `${location.protocol}//${location.host}/api`
 const tokenKey = 'bodega-token'
 
+function normalizeText(value = '') {
+  return value.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('es-CO').trim()
+}
+
+function productStatus(product) {
+  if (product.estado) return product.estado
+  const stock = Number(product.stock_actual)
+  const minimum = Number(product.stock_minimo)
+  return stock <= minimum ? 'CRITICO' : stock <= minimum * 1.2 ? 'PRECAUCION' : 'OPTIMO'
+}
+
 async function api(path, options = {}) {
   const headers = { ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
     ...(localStorage.getItem(tokenKey) ? { Authorization: `Bearer ${localStorage.getItem(tokenKey)}` } : {}),
@@ -31,10 +42,10 @@ export default function App() {
   const [username, setUsername] = useState('')
   const [secret, setSecret] = useState('')
   const [products, setProducts] = useState([])
-  const [matches, setMatches] = useState([])
   const [pending, setPending] = useState([])
   const [notice, setNotice] = useState('')
   const [search, setSearch] = useState('')
+  const [category, setCategory] = useState('')
   const [selected, setSelected] = useState(null)
   const [kind, setKind] = useState('SALIDA')
   const [quantity, setQuantity] = useState('1')
@@ -46,6 +57,14 @@ export default function App() {
   const videoRef = useRef(null)
   const scannerRef = useRef(null)
   const syncLock = useRef(false)
+
+  const categories = [...new Set(products.map(product => product.categoria).filter(Boolean))].sort((a, b) => a.localeCompare(b, 'es-CO'))
+  const searchTerm = normalizeText(search)
+  const visibleProducts = products.filter(product => {
+    const fields = [product.nombre, product.codigo_qr, product.categoria, product.ubicacion, product.descripcion]
+    const matchesText = !searchTerm || fields.some(value => normalizeText(value || '').includes(searchTerm))
+    return matchesText && (!category || product.categoria === category)
+  })
 
   const refreshQueue = useCallback(async () => setPending(await db.cola.orderBy('secuencia').toArray()), [])
   const sync = useCallback(async () => {
@@ -127,28 +146,26 @@ export default function App() {
   async function lookup(value = search) {
     const term = value.trim()
     if (!term) return
-    setMatches([])
     const local = await db.productos.toArray()
-    const match = local.find(p => p.codigo_qr.toLowerCase() === term.toLowerCase()) ||
-      local.filter(p => p.nombre.toLowerCase().includes(term.toLowerCase()))
-    if (Array.isArray(match)) {
-      if (match.length === 1) setSelected(match[0])
-      else if (match.length > 1) { setMatches(match); setNotice(`Hay ${match.length} coincidencias; seleccione el producto.`) }
-      else { setSelected(null); setNotice('Producto no encontrado.') }
-    } else setSelected(match || null)
-    if ((!match || (Array.isArray(match) && match.length === 0)) && navigator.onLine) {
+    const exact = local.find(p => p.codigo_qr.toLowerCase() === term.toLowerCase())
+    if (exact) { setSelected(exact); setNotice(''); return }
+    const localMatches = local.filter(p => [p.nombre, p.codigo_qr, p.categoria, p.ubicacion, p.descripcion]
+      .some(value => normalizeText(value || '').includes(normalizeText(term))))
+    if (localMatches.length === 1) { setSelected(localMatches[0]); setNotice(''); return }
+    if (localMatches.length > 1) { setNotice(`${localMatches.length} productos coinciden. Elige una tarjeta del catálogo.`); return }
+    if (navigator.onLine) {
       try {
         const remote = await api(`/productos?q=${encodeURIComponent(term)}`)
         await db.productos.bulkPut(remote)
-        setProducts(remote)
+        const allProducts = await db.productos.toArray()
+        setProducts(allProducts)
         if (remote.length === 1) setSelected(remote[0])
-        else if (remote.length > 1) { setMatches(remote); setNotice(`Hay ${remote.length} coincidencias; seleccione el producto.`) }
-        else setNotice('Producto no encontrado.')
+        else if (remote.length > 1) setNotice(`${remote.length} productos coinciden. Elige una tarjeta del catálogo.`)
+        else setNotice(`No encontramos “${term}”. Prueba otra palabra o revisa la categoría.`)
         return
       } catch (error) { setNotice(`No se pudo consultar el servidor: ${error.message}`); return }
     }
-    if (!navigator.onLine && !match) setNotice('Producto no está en el catálogo descargado. Conéctese para buscarlo.')
-    else if (!match) setNotice('Producto no encontrado.')
+    if (!navigator.onLine) setNotice('Ese artículo no está guardado en este celular. Conéctate y actualiza el catálogo.')
   }
   async function login(event) {
     event.preventDefault()
@@ -188,10 +205,11 @@ export default function App() {
     <section className="syncbar"><strong>{pending.length} pendiente{pending.length === 1 ? '' : 's'}</strong><button onClick={sync}>Sincronizar ahora</button></section>
     {pending.some(m => m.estado === 'fallido') && <section className="errors" aria-live="polite"><h2>Movimientos con error</h2>{pending.filter(m => m.estado === 'fallido').map(m => <p key={m.uuid}><strong>{products.find(p => p.id === m.producto_id)?.nombre || `Producto ${m.producto_id}`}</strong> · {m.uuid.slice(0, 8)} · {m.error}</p>)}</section>}
     {notice && <p className="notice" role="status">{notice}</p>}
-    <section className="search"><h2>Buscar insumo</h2><div className="searchrow"><input value={search} onChange={e => { setSearch(e.target.value); setMatches([]) }} onKeyDown={e => e.key === 'Enter' && lookup()} placeholder="Código QR o nombre" aria-label="Código QR o nombre"/><button onClick={() => lookup()}>Buscar</button></div>
+    <section className="search"><h2>Inventario de bodega</h2><p className="helper">Escribe parte del nombre, código, ubicación o categoría. También puedes recorrer los productos.</p><form className="searchrow" onSubmit={e => { e.preventDefault(); lookup() }}><input value={search} onChange={e => { setSearch(e.target.value); setNotice('') }} placeholder="Ej.: chaleco, protección, aceite…" aria-label="Buscar productos por nombre, código o categoría"/><button type="submit">Buscar</button></form>
       <button className="primary camera" onClick={cameraOpen ? () => { stopScanner(); setCameraOpen(false) } : startScanner}>{cameraOpen ? 'Cerrar cámara' : 'Escanear QR'}</button>
       {cameraOpen && <div className="cameraBox"><video ref={videoRef} muted playsInline/><button onClick={toggleTorch}>{torch ? 'Apagar linterna' : 'Encender linterna'}</button></div>}
-      {matches.length > 0 && !selected && <div className="results">{matches.slice(0, 8).map(p => <button key={p.id} className="result" onClick={() => { setSelected(p); setMatches([]); setNotice('') }}>{p.foto_url && <img className="productphoto thumb" src={p.foto_url} alt="" loading="lazy"/>}<strong>{p.nombre}</strong><span>{p.codigo_qr} · {p.ubicacion}</span></button>)}</div>}
+      {!selected && products.length > 0 && <><div className="categoryFilters" aria-label="Filtrar por categoría"><button type="button" className={!category ? 'active' : ''} onClick={() => setCategory('')}>Todas <span>{products.length}</span></button>{categories.map(name => <button type="button" key={name} className={category === name ? 'active' : ''} onClick={() => setCategory(name)}>{name} <span>{products.filter(p => p.categoria === name).length}</span></button>)}</div><p className="resultsCount">{visibleProducts.length} de {products.length} productos</p><div className="productGrid">{visibleProducts.map(product => <button type="button" key={product.id} className="productCard" onClick={() => { setSelected(product); setNotice('') }}>{product.foto_url ? <img src={product.foto_url} alt="" loading="lazy"/> : <span className="productPlaceholder" aria-hidden="true">{product.nombre.slice(0, 1).toLocaleUpperCase('es-CO')}</span>}<span className="cardName">{product.nombre}</span><span className="cardCategory">{product.categoria}</span><span className="cardStock">Stock: <strong>{product.stock_actual} {product.unidad_medida}</strong></span><span className="cardLocation">{product.ubicacion}</span><span className={`badge ${productStatus(product).toLowerCase()}`}>{productStatus(product)}</span></button>)}</div>{visibleProducts.length === 0 && <div className="emptyState"><strong>No hay resultados para ese filtro.</strong><button type="button" onClick={() => { setSearch(''); setCategory('') }}>Ver todos los productos</button></div>}</>}
+      {products.length === 0 && <div className="emptyState"><h3>El catálogo todavía está vacío</h3><p>No hay productos cargados en el servidor. {role === 'ADMIN' ? 'Abre el panel administrador para importar el catálogo de ejemplo o el Excel de la bodega.' : 'Pídele al administrador que cargue el catálogo y luego toca Actualizar.'}</p>{role === 'ADMIN' && <button className="primary" onClick={() => setShowDashboard(true)}>Abrir panel administrador</button>}<button onClick={loadProducts}>Actualizar catálogo</button></div>}
     </section>
     {selected && <section className="selected"><div className="producttitle">{selected.foto_url && <img className="productphoto" src={selected.foto_url} alt={`Foto de ${selected.nombre}`}/>}<div><h2>Confirmar producto</h2><p className="productname">{selected.nombre}</p><p>{selected.codigo_qr} · {selected.ubicacion}</p>{selected.descripcion && <p>{selected.descripcion}</p>}</div><button className="small" onClick={() => setSelected(null)}>Cambiar</button></div>
       <p>Stock del último catálogo: <strong>{selected.stock_actual} {selected.unidad_medida}</strong></p>

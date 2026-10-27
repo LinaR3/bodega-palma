@@ -122,6 +122,8 @@ class AlertaPedido(Base):
     cantidad_sugerida: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     cantidad_pedida: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0, nullable=False)
     cantidad_recibida: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0, nullable=False)
+    es_manual: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    observacion: Mapped[str | None] = mapped_column(String(300))
     creada_en: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow)
     actualizada_en: Mapped[datetime] = mapped_column(UTCDateTime(), default=utcnow, onupdate=utcnow)
     producto: Mapped[Producto] = relationship(back_populates="alertas")

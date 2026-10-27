@@ -32,6 +32,17 @@ def recalcular_sugerencia(db: Session, producto: Producto) -> AlertaPedido | Non
         AlertaPedido.producto_id == producto.id,
         AlertaPedido.estado == EstadoAlerta.SUGERIDO,
     ).order_by(AlertaPedido.id)).all()
+    pedido_manual_abierto = db.scalar(select(AlertaPedido.id).where(
+        AlertaPedido.producto_id == producto.id,
+        AlertaPedido.es_manual.is_(True),
+        AlertaPedido.estado.in_([EstadoAlerta.SUGERIDO, EstadoAlerta.APROBADO, EstadoAlerta.PEDIDO]),
+    ).limit(1))
+    if pedido_manual_abierto:
+        for alerta in abiertas:
+            if not alerta.es_manual:
+                alerta.estado = EstadoAlerta.CANCELADO
+        return None
+    abiertas = [alerta for alerta in abiertas if not alerta.es_manual]
     aprobadas = db.scalar(select(AlertaPedido.id).where(
         AlertaPedido.producto_id == producto.id,
         AlertaPedido.estado == EstadoAlerta.APROBADO,

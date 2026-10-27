@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.core.security import require_roles
 from app.models.entities import AlertaPedido, Discrepancia, EstadoAlerta, EventoAuditoria, MovimientoInventario, Producto, Usuario
-from app.schemas.inventory import AlertaOut, AlertaTransicion, MovimientoCreate, MovimientoOut, ProductoCreate, ProductoOut, ProductoUpdate
+from app.schemas.inventory import AlertaOut, AlertaTransicion, MovimientoCreate, MovimientoOut, PedidoManualCreate, ProductoCreate, ProductoOut, ProductoUpdate
 from app.services.inventory import estado_stock, recalcular_sugerencia, registrar_movimiento
 from app.services.files import MAX_IMPORT_BYTES, demo_catalog_xlsx, qr_labels_pdf, read_catalog, suggestions_pdf, suggestions_xlsx
 
@@ -160,6 +160,34 @@ def listar_alertas(db: Session = Depends(get_db)):
     return db.scalars(select(AlertaPedido).order_by(AlertaPedido.id.desc()).limit(500)).all()
 
 
+@router.post("/pedidos/manuales", response_model=AlertaOut, status_code=201)
+def crear_pedido_manual(data: PedidoManualCreate, db: Session = Depends(get_db),
+                        user: Usuario = Depends(require_roles("ADMIN"))):
+    producto = db.get(Producto, data.producto_id)
+    if not producto or not producto.activo:
+        raise HTTPException(status_code=404, detail="Producto no encontrado o inactivo")
+    abiertos = db.scalars(select(AlertaPedido).where(
+        AlertaPedido.producto_id == producto.id,
+        AlertaPedido.estado.in_([EstadoAlerta.SUGERIDO, EstadoAlerta.APROBADO, EstadoAlerta.PEDIDO]),
+    ).order_by(AlertaPedido.id)).all()
+    if any(alerta.estado in {EstadoAlerta.APROBADO, EstadoAlerta.PEDIDO} for alerta in abiertos):
+        raise HTTPException(status_code=409, detail="Este producto ya tiene un pedido aprobado o en tránsito")
+    alerta = abiertos[0] if abiertos else AlertaPedido(producto_id=producto.id, estado=EstadoAlerta.SUGERIDO)
+    alerta.es_manual = True
+    alerta.cantidad_sugerida = data.cantidad
+    alerta.observacion = data.observacion
+    for duplicada in abiertos[1:]:
+        duplicada.estado = EstadoAlerta.CANCELADO
+    db.add(alerta)
+    db.flush()
+    db.add(EventoAuditoria(usuario_id=user.id, usuario_nombre=user.nombre, accion="CREAR_PEDIDO_MANUAL",
+        entidad="alerta_pedido", entidad_id=str(alerta.id), dispositivo="panel administrador",
+        detalle=f'{{"producto_id":{producto.id},"cantidad":"{data.cantidad}"}}'))
+    db.commit()
+    db.refresh(alerta)
+    return alerta
+
+
 @router.get("/exportar/pedidos.xlsx", dependencies=[Depends(require_roles("ADMIN"))])
 def exportar_pedidos_xlsx(db: Session = Depends(get_db)):
     alerts = db.scalars(select(AlertaPedido).where(AlertaPedido.estado == EstadoAlerta.SUGERIDO).order_by(AlertaPedido.id)).all()
@@ -224,7 +252,8 @@ def resumen_dashboard(q: str | None = None, categoria: str | None = None,
         "criticos": [product_out(p).model_dump(mode="json") for p in products if estado_stock(p.stock_actual, p.stock_minimo) == "CRITICO"],
         "alertas": [{"id": a.id, "producto_id": a.producto_id, "producto": next((p.nombre for p in products if p.id == a.producto_id), ""),
                      "estado": a.estado.value, "cantidad_sugerida": str(a.cantidad_sugerida),
-                     "cantidad_pedida": str(a.cantidad_pedida), "cantidad_recibida": str(a.cantidad_recibida)} for a in alerts],
+                     "cantidad_pedida": str(a.cantidad_pedida), "cantidad_recibida": str(a.cantidad_recibida),
+                     "es_manual": a.es_manual, "observacion": a.observacion} for a in alerts],
         "discrepancias": [{"id": d.id, "producto": name, "codigo_qr": code, "movimiento_id": d.movimiento_id,
                            "tipo": d.tipo, "detalle": d.detalle, "creada_en": d.creada_en.isoformat()} for d, name, code in discrepancies],
         "movimientos": [{"id": m.id, "producto": name, "codigo_qr": code, "tipo": m.tipo.value,
