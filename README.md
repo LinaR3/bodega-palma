@@ -24,6 +24,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 La API local queda en `http://localhost:8000`; documentación OpenAPI en `/docs` y estado en `/health`. Inicializa usuario con `python -m app.create_user admin --rol ADMIN`. Para desarrollo, reemplaza `DATABASE_URL` antes de iniciar. SQLite usa WAL y busy timeout. En producción publica la PWA únicamente detrás de Caddy HTTPS y firewall LAN, conforme a `docs/despliegue.md`.
 
+### Productos de demostración
+
+Después de migrar la base de datos, ejecuta `python -m app.seed_demo` desde `backend` para añadir artículos de muestra con sus fotos locales. El comando es idempotente por código QR. Las cantidades son **de demostración**: confirma el conteo físico antes de usar el sistema para operar.
+
+La plantilla Excel descargable (`/api/catalogo/plantilla.xlsx`) y la importación CSV/XLSX aceptan las columnas `descripcion`, `foto_url` y `stock_inicial` (opcionales). El archivo `/api/catalogo/ejemplo.xlsx` trae los tres productos de muestra y sirve para probar una importación completa. Una cantidad inicial positiva se registra como movimiento `ENTRADA` inmutable; nunca se escribe directamente sobre el stock. Las fotos deben ser rutas locales servidas por la aplicación, por ejemplo `/productos/guantes.jpg`.
+
 ## Pruebas
 
 ```bash

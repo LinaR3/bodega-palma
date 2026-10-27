@@ -38,6 +38,8 @@ class Producto(Base):
     categoria: Mapped[str] = mapped_column(String(100))
     ubicacion: Mapped[str] = mapped_column(String(120))
     unidad_medida: Mapped[str] = mapped_column(String(40))
+    descripcion: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    foto_url: Mapped[str | None] = mapped_column(String(255))
     stock_actual: Mapped[Decimal] = mapped_column(Numeric(14, 3), default=0, nullable=False)
     stock_minimo: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)
     stock_maximo: Mapped[Decimal] = mapped_column(Numeric(14, 3), nullable=False)

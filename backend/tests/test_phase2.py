@@ -76,6 +76,49 @@ def test_import_catalog_supports_xlsx(client):
     assert response.status_code == 200 and response.json()["insertados"] == 1
 
 
+def test_import_excel_keeps_product_description_photo_and_initial_stock_as_movement(client, db_factory):
+    from openpyxl import Workbook
+    from app.models.entities import MovimientoInventario, Producto
+    wb = Workbook(); ws = wb.active
+    ws.append(["codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "stock_minimo", "stock_maximo", "descripcion", "foto_url", "stock_inicial"])
+    ws.append(["PAL-009110", "Envases plásticos", "Insumos", "Estante B1", "unidad", 2, 10,
+               "Envases completos y sellados.", "/productos/envase.jpg", 7])
+    content = io.BytesIO(); wb.save(content); content.seek(0)
+    response = client.post("/api/catalogo/importar", files={"file": ("muestra.xlsx", content,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert response.status_code == 200 and response.json()["insertados"] == 1
+    products = client.get("/api/productos?q=Envases").json()
+    assert products[0]["stock_actual"] == "7.000"
+    assert products[0]["descripcion"] == "Envases completos y sellados."
+    assert products[0]["foto_url"] == "/productos/envase.jpg"
+    db = db_factory()
+    try:
+        movement = db.query(MovimientoInventario).filter_by(producto_id=products[0]["id"]).one()
+        assert movement.tipo == "ENTRADA" and movement.cantidad_cambio == 7
+    finally:
+        db.close()
+
+
+def test_demo_seed_catalog_contains_only_safe_whole_items():
+    from app.demo_catalog import DEMO_PRODUCTS
+    assert len(DEMO_PRODUCTS) == 3
+    assert all(item["stock_inicial"] == item["stock_inicial"].to_integral_value() for item in DEMO_PRODUCTS)
+    assert all(item["foto_url"].startswith("/productos/") and item["descripcion"] for item in DEMO_PRODUCTS)
+
+
+def test_downloadable_sample_excel_can_be_imported_and_adds_three_products(client):
+    example = client.get("/api/catalogo/ejemplo.xlsx")
+    assert example.status_code == 200 and example.content.startswith(b"PK")
+    imported = client.post("/api/catalogo/importar", files={"file": ("catalogo-ejemplo.xlsx", example.content,
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
+    assert imported.status_code == 200
+    assert imported.json()["insertados"] == 3
+    products = client.get("/api/productos").json()
+    assert {p["codigo_qr"] for p in products} == {"PAL-009101", "PAL-009102", "PAL-009103"}
+    assert all(p["descripcion"] and p["foto_url"] for p in products)
+    assert {p["stock_actual"] for p in products} == {"8.000", "12.000", "15.000"}
+
+
 def test_bodeguero_is_forbidden_from_admin_endpoints(client):
     product = client.post("/api/productos", json={"codigo_qr": "PAL-008888", "nombre": "Producto",
         "categoria": "X", "ubicacion": "A", "unidad_medida": "unidad", "stock_minimo": 1, "stock_maximo": 5}).json()

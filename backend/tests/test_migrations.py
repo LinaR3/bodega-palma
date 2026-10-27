@@ -16,4 +16,4 @@ def test_alembic_upgrade_from_empty_database(tmp_path):
         tables = {row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         assert {"productos", "usuarios", "movimientos_inventario", "alertas_pedido",
                 "discrepancias", "sesiones", "eventos_auditoria", "alembic_version"} <= tables
-        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0003_audit"
+        assert db.execute("SELECT version_num FROM alembic_version").fetchone()[0] == "0004_product_media"

@@ -56,7 +56,7 @@ def recalcular_sugerencia(db: Session, producto: Producto) -> AlertaPedido | Non
     return principal
 
 
-def registrar_movimiento(db: Session, data: MovimientoCreate) -> tuple[MovimientoInventario, bool]:
+def registrar_movimiento(db: Session, data: MovimientoCreate, *, commit: bool = True) -> tuple[MovimientoInventario, bool]:
     existente = db.scalar(select(MovimientoInventario).where(MovimientoInventario.uuid == data.uuid))
     if existente:
         return existente, True
@@ -101,8 +101,9 @@ def registrar_movimiento(db: Session, data: MovimientoCreate) -> tuple[Movimient
         # Refresh after atomic update for suggestion calculation.
         db.refresh(producto)
         recalcular_sugerencia(db, producto)
-        db.commit()
-        db.refresh(movement)
+        if commit:
+            db.commit()
+            db.refresh(movement)
         return movement, False
     except IntegrityError:
         db.rollback()

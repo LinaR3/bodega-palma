@@ -1,5 +1,6 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from uuid import uuid4
 import csv
 import io
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
@@ -13,14 +14,14 @@ from app.core.security import require_roles
 from app.models.entities import AlertaPedido, Discrepancia, EstadoAlerta, EventoAuditoria, MovimientoInventario, Producto, Usuario
 from app.schemas.inventory import AlertaOut, AlertaTransicion, MovimientoCreate, MovimientoOut, ProductoCreate, ProductoOut, ProductoUpdate
 from app.services.inventory import estado_stock, recalcular_sugerencia, registrar_movimiento
-from app.services.files import MAX_IMPORT_BYTES, qr_labels_pdf, read_catalog, suggestions_pdf, suggestions_xlsx
+from app.services.files import MAX_IMPORT_BYTES, demo_catalog_xlsx, qr_labels_pdf, read_catalog, suggestions_pdf, suggestions_xlsx
 
 router = APIRouter(prefix="/api")
 
 
 def product_out(producto: Producto) -> ProductoOut:
     return ProductoOut.model_validate({**{k: getattr(producto, k) for k in (
-        "id", "codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida",
+        "id", "codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "descripcion", "foto_url",
         "stock_actual", "stock_minimo", "stock_maximo")},
         "estado": estado_stock(producto.stock_actual, producto.stock_minimo)})
 
@@ -49,7 +50,7 @@ def actualizar_producto(producto_id: int, data: ProductoUpdate, db: Session = De
     if "activo" in changes and changes["activo"] is None:
         raise HTTPException(422, "activo no puede ser nulo")
     merged = {key: getattr(producto, key) for key in (
-        "codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "stock_minimo", "stock_maximo")}
+        "codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "descripcion", "foto_url", "stock_minimo", "stock_maximo")}
     merged.update({k: v for k, v in changes.items() if k != "activo"})
     try:
         validated = ProductoCreate.model_validate(merged)
@@ -80,12 +81,19 @@ async def importar_catalogo(file: UploadFile = File(...), db: Session = Depends(
         raise HTTPException(422, str(exc))
     seen = set()
     inserted = 0
-    for line, item in rows:
+    for line, item, stock_inicial in rows:
         if item.codigo_qr in seen or db.scalar(select(Producto.id).where(Producto.codigo_qr == item.codigo_qr)):
             errors.append({"fila": line, "error": f"codigo_qr duplicado: {item.codigo_qr}"})
             continue
         seen.add(item.codigo_qr)
-        db.add(Producto(**item.model_dump(), stock_actual=Decimal(0)))
+        producto = Producto(**item.model_dump(), stock_actual=Decimal(0))
+        db.add(producto)
+        db.flush()
+        if stock_inicial > 0:
+            registrar_movimiento(db, MovimientoCreate(uuid=uuid4(), producto_id=producto.id,
+                tipo="ENTRADA", cantidad_cambio=stock_inicial,
+                motivo="Saldo inicial importado desde catálogo Excel/CSV",
+                usuario_id=user.id, usuario_nombre=user.nombre, dispositivo="importación"), commit=False)
         inserted += 1
     db.add(EventoAuditoria(usuario_id=user.id, usuario_nombre=user.nombre, accion="IMPORTAR_CATALOGO",
         entidad="producto", entidad_id=None, dispositivo="web", detalle=f"{{\"insertados\":{inserted}}}"))
@@ -100,11 +108,18 @@ async def importar_catalogo(file: UploadFile = File(...), db: Session = Depends(
 def plantilla_catalogo():
     from openpyxl import Workbook
     wb = Workbook(); ws = wb.active; ws.title = "Catalogo"
-    ws.append(["codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "stock_minimo", "stock_maximo"])
-    ws.append(["PAL-000123", "Ejemplo botella", "Insumos", "Estante A", "botella", 2, 10])
+    ws.append(["codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "stock_minimo", "stock_maximo", "descripcion", "foto_url", "stock_inicial"])
+    ws.append(["PAL-000123", "Ejemplo botella", "Insumos", "Estante A", "botella", 2, 10, "Descripción opcional", "", 0])
     output = io.BytesIO(); wb.save(output); output.seek(0)
     return StreamingResponse(output, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                              headers={"Content-Disposition": "attachment; filename=plantilla-catalogo.xlsx"})
+
+
+@router.get("/catalogo/ejemplo.xlsx", dependencies=[Depends(require_roles("ADMIN"))])
+def catalogo_ejemplo():
+    content = demo_catalog_xlsx()
+    return Response(content, media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    headers={"Content-Disposition": "attachment; filename=catalogo-ejemplo.xlsx"})
 
 
 @router.get("/productos", response_model=list[ProductoOut], dependencies=[Depends(require_roles("ADMIN", "BODEGUERO"))])

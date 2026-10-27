@@ -11,8 +11,17 @@ class ProductoCreate(BaseModel):
     categoria: str = Field(min_length=1, max_length=100)
     ubicacion: str = Field(min_length=1, max_length=120)
     unidad_medida: str = Field(min_length=1, max_length=40)
+    descripcion: str = Field(default="", max_length=1000)
+    foto_url: str | None = Field(default=None, max_length=255, pattern=r"^(/[A-Za-z0-9_./-]+)?$")
     stock_minimo: Decimal = Field(ge=0, max_digits=14, decimal_places=3)
     stock_maximo: Decimal = Field(gt=0, max_digits=14, decimal_places=3)
+
+    @field_validator("foto_url")
+    @classmethod
+    def local_photo_path(cls, value):
+        if value and (value.startswith("//") or ".." in value.split("/")):
+            raise ValueError("foto_url debe ser una ruta local segura")
+        return value
 
     @field_validator("stock_minimo", "stock_maximo")
     @classmethod
@@ -34,9 +43,18 @@ class ProductoUpdate(BaseModel):
     categoria: str | None = Field(default=None, min_length=1, max_length=100)
     ubicacion: str | None = Field(default=None, min_length=1, max_length=120)
     unidad_medida: str | None = Field(default=None, min_length=1, max_length=40)
+    descripcion: str | None = Field(default=None, max_length=1000)
+    foto_url: str | None = Field(default=None, max_length=255, pattern=r"^(/[A-Za-z0-9_./-]+)?$")
     stock_minimo: Decimal | None = Field(default=None, ge=0, max_digits=14, decimal_places=3)
     stock_maximo: Decimal | None = Field(default=None, gt=0, max_digits=14, decimal_places=3)
     activo: bool | None = None
+
+    @field_validator("foto_url")
+    @classmethod
+    def local_photo_path(cls, value):
+        if value and (value.startswith("//") or ".." in value.split("/")):
+            raise ValueError("foto_url debe ser una ruta local segura")
+        return value
 
     @field_validator("stock_minimo", "stock_maximo")
     @classmethod
@@ -54,6 +72,8 @@ class ProductoOut(BaseModel):
     categoria: str
     ubicacion: str
     unidad_medida: str
+    descripcion: str
+    foto_url: str | None
     stock_actual: Decimal
     stock_minimo: Decimal
     stock_maximo: Decimal

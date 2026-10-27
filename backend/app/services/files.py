@@ -18,6 +18,7 @@ from app.schemas.inventory import ProductoCreate
 
 MAX_IMPORT_BYTES = 10 * 1024 * 1024
 CATALOG_HEADERS = ["codigo_qr", "nombre", "categoria", "ubicacion", "unidad_medida", "stock_minimo", "stock_maximo"]
+OPTIONAL_CATALOG_HEADERS = ["descripcion", "foto_url", "stock_inicial"]
 
 
 def excel_safe(value):
@@ -26,7 +27,7 @@ def excel_safe(value):
     return value
 
 
-def read_catalog(content: bytes, filename: str) -> tuple[list[dict], list[dict]]:
+def read_catalog(content: bytes, filename: str) -> tuple[list[tuple[int, ProductoCreate, Decimal]], list[dict]]:
     if len(content) > MAX_IMPORT_BYTES:
         raise ValueError("El archivo supera el límite de 10 MB")
     if filename.lower().endswith(".csv"):
@@ -50,11 +51,30 @@ def read_catalog(content: bytes, filename: str) -> tuple[list[dict], list[dict]]
             missing = [header for header in CATALOG_HEADERS if header not in normalized]
             if missing:
                 raise ValueError("Faltan columnas: " + ", ".join(missing))
-            item = ProductoCreate.model_validate({key: normalized[key] for key in CATALOG_HEADERS})
-            parsed.append((line, item))
+            product_values = {key: normalized[key] for key in CATALOG_HEADERS}
+            product_values.update({key: normalized.get(key, "") or "" for key in OPTIONAL_CATALOG_HEADERS[:2]})
+            item = ProductoCreate.model_validate(product_values)
+            initial = Decimal(str(normalized.get("stock_inicial", 0) or 0))
+            if not initial.is_finite() or initial < 0 or initial != initial.to_integral_value():
+                raise ValueError("stock_inicial debe ser un entero no negativo")
+            parsed.append((line, item, initial))
         except Exception as exc:
             errors.append({"fila": line, "error": str(exc)[:500]})
     return parsed, errors
+
+
+def demo_catalog_xlsx() -> bytes:
+    from app.demo_catalog import DEMO_PRODUCTS
+
+    wb = Workbook(); ws = wb.active; ws.title = "Catalogo de ejemplo"
+    headers = CATALOG_HEADERS + OPTIONAL_CATALOG_HEADERS
+    ws.append(headers)
+    for product in DEMO_PRODUCTS:
+        ws.append([product.get(header, "") for header in headers])
+    ws.freeze_panes = "A2"
+    ws.auto_filter.ref = ws.dimensions
+    output = io.BytesIO(); wb.save(output)
+    return output.getvalue()
 
 
 def suggestions_xlsx(alerts: list[AlertaPedido], products: dict[int, Producto]) -> bytes:
