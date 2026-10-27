@@ -28,7 +28,7 @@ La API local queda en `http://localhost:8000`; documentación OpenAPI en `/docs`
 
 Después de migrar la base de datos, ejecuta `python -m app.seed_demo` desde `backend` para añadir artículos de muestra con sus fotos locales. El comando es idempotente por código QR. Las cantidades son **de demostración**: confirma el conteo físico antes de usar el sistema para operar.
 
-La plantilla Excel descargable (`/api/catalogo/plantilla.xlsx`) y la importación CSV/XLSX aceptan las columnas `descripcion`, `foto_url` y `stock_inicial` (opcionales). El archivo `/api/catalogo/ejemplo.xlsx` trae los tres productos de muestra y sirve para probar una importación completa. Una cantidad inicial positiva se registra como movimiento `ENTRADA` inmutable; nunca se escribe directamente sobre el stock. Las fotos deben ser rutas locales servidas por la aplicación, por ejemplo `/productos/guantes.jpg`.
+La plantilla Excel descargable (`/api/catalogo/plantilla.xlsx`) y la importación CSV/XLSX aceptan las columnas `descripcion`, `foto_url` y `stock_inicial` (opcionales). El archivo `/api/catalogo/ejemplo.xlsx` trae los diez productos de muestra y sirve para probar una importación completa. Una cantidad inicial positiva se registra como movimiento `ENTRADA` inmutable; nunca se escribe directamente sobre el stock. Las fotos deben ser rutas locales servidas por la aplicación, por ejemplo `/productos/guantes.jpg`.
 
 ## Pruebas
 

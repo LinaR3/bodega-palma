@@ -1,5 +1,6 @@
 import csv
 import io
+from decimal import Decimal
 from uuid import uuid4
 
 from app.models.entities import Usuario
@@ -100,23 +101,44 @@ def test_import_excel_keeps_product_description_photo_and_initial_stock_as_movem
 
 
 def test_demo_seed_catalog_contains_only_safe_whole_items():
+    from pathlib import Path
     from app.demo_catalog import DEMO_PRODUCTS
-    assert len(DEMO_PRODUCTS) == 3
+    public = Path(__file__).resolve().parents[2] / "frontend" / "public"
+    assert len(DEMO_PRODUCTS) == 10
     assert all(item["stock_inicial"] == item["stock_inicial"].to_integral_value() for item in DEMO_PRODUCTS)
     assert all(item["foto_url"].startswith("/productos/") and item["descripcion"] for item in DEMO_PRODUCTS)
+    assert all((public / item["foto_url"].lstrip("/")).is_file() for item in DEMO_PRODUCTS)
+    prohibited = ("tornillo", "tuerca", "cuchillo", "cuchilla", "aguja", "punzante")
+    assert not any(any(word in (item["nombre"] + " " + item["descripcion"]).lower() for word in prohibited)
+                   for item in DEMO_PRODUCTS)
 
 
-def test_downloadable_sample_excel_can_be_imported_and_adds_three_products(client):
+def test_downloadable_sample_excel_can_be_imported_and_adds_ten_products(client):
     example = client.get("/api/catalogo/ejemplo.xlsx")
     assert example.status_code == 200 and example.content.startswith(b"PK")
     imported = client.post("/api/catalogo/importar", files={"file": ("catalogo-ejemplo.xlsx", example.content,
         "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")})
     assert imported.status_code == 200
-    assert imported.json()["insertados"] == 3
+    assert imported.json()["insertados"] == 10
     products = client.get("/api/productos").json()
-    assert {p["codigo_qr"] for p in products} == {"PAL-009101", "PAL-009102", "PAL-009103"}
+    assert {p["codigo_qr"] for p in products} == {f"PAL-009{n}" for n in range(101, 111)}
     assert all(p["descripcion"] and p["foto_url"] for p in products)
-    assert {p["stock_actual"] for p in products} == {"8.000", "12.000", "15.000"}
+    assert {p["stock_actual"] for p in products} == {"3.000", "4.000", "5.000", "6.000", "7.000", "8.000", "10.000", "12.000", "15.000"}
+
+
+def test_demo_seed_adds_initial_stock_as_audited_movements_and_is_idempotent(db_factory, monkeypatch):
+    from app import seed_demo
+    from app.models.entities import MovimientoInventario, Producto
+    monkeypatch.setattr(seed_demo, "SessionLocal", db_factory)
+    assert seed_demo.seed_demo() == 10
+    assert seed_demo.seed_demo() == 0
+    db = db_factory()
+    try:
+        assert db.query(Producto).count() == 10
+        assert db.query(MovimientoInventario).count() == 10
+        assert sum((p.stock_actual for p in db.query(Producto).all()), Decimal(0)) == Decimal(80)
+    finally:
+        db.close()
 
 
 def test_bodeguero_is_forbidden_from_admin_endpoints(client):

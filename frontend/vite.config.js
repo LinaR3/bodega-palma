@@ -12,6 +12,6 @@ export default defineConfig({
       lang: 'es-CO', start_url: '/', display: 'standalone', background_color: '#f4f7f3',
       theme_color: '#14532d', icons: [{ src: '/favicon.svg', sizes: 'any', type: 'image/svg+xml', purpose: 'any maskable' }]
     },
-    workbox: { globPatterns: ['**/*.{js,css,html,svg,woff2}'], navigateFallback: 'index.html' }
+    workbox: { globPatterns: ['**/*.{js,css,html,svg,woff2,jpg}'], navigateFallback: 'index.html' }
   })]
 })
