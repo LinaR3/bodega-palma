@@ -21,6 +21,8 @@ export default function Dashboard({ onBack }) {
   const [filter, setFilter] = useState({})
   const [busy, setBusy] = useState(false)
   const [receiving, setReceiving] = useState({})
+  const [catalogFile, setCatalogFile] = useState(null)
+  const [importResult, setImportResult] = useState(null)
 
   const refresh = useCallback(async () => {
     try {
@@ -45,6 +47,40 @@ export default function Dashboard({ onBack }) {
     try { await request(`/discrepancias/${id}/resolver`, { method: 'POST' }); await refresh() }
     catch (e) { setError(e.message) }
     finally { setBusy(false) }
+  }
+
+  async function downloadFile(path, filename) {
+    try {
+      const response = await fetch(`/api${path}`, { headers: { Authorization: `Bearer ${localStorage.getItem('bodega-token')}` } })
+      if (!response.ok) throw new Error(`No se pudo descargar el archivo (${response.status}).`)
+      const url = URL.createObjectURL(await response.blob())
+      const link = document.createElement('a'); link.href = url; link.download = filename
+      document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
+    } catch (e) { setError(e.message) }
+  }
+
+  async function importCatalog(event) {
+    event.preventDefault()
+    if (!catalogFile) return
+    setBusy(true); setImportResult(null); setError('')
+    try {
+      const form = new FormData(); form.append('file', catalogFile)
+      const response = await fetch('/api/catalogo/importar', { method: 'POST',
+        headers: { Authorization: `Bearer ${localStorage.getItem('bodega-token')}` }, body: form })
+      if (!response.ok) {
+        let message = `No se pudo importar el archivo (${response.status}).`
+        try { message = (await response.json()).detail || message } catch {}
+        throw new Error(message)
+      }
+      setImportResult(await response.json()); setCatalogFile(null); event.target.reset(); await refresh()
+    } catch (e) { setError(e.message) }
+    finally { setBusy(false) }
+  }
+
+  function downloadErrorReport(csv) {
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const link = document.createElement('a'); link.href = url; link.download = 'errores-importacion.csv'
+    document.body.appendChild(link); link.click(); link.remove(); setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   async function transition(alert, estado) {
@@ -77,7 +113,8 @@ export default function Dashboard({ onBack }) {
       <label>Hasta<input type="date" value={to} onChange={e => setTo(e.target.value)} /></label>
       <button className="primary">Aplicar filtros</button>
     </form>
-    <nav className="exports"><a href="/api/exportar/pedidos.pdf" target="_blank">Pedidos PDF</a><a href="/api/exportar/pedidos.xlsx">Pedidos Excel</a><a href="/api/etiquetas.pdf" target="_blank">Etiquetas QR</a></nav>
+    <nav className="exports"><button onClick={() => downloadFile('/exportar/pedidos.pdf', 'pedidos-sugeridos.pdf')}>Pedidos PDF</button><button onClick={() => downloadFile('/exportar/pedidos.xlsx', 'pedidos-sugeridos.xlsx')}>Pedidos Excel</button><button onClick={() => downloadFile('/etiquetas.pdf', 'etiquetas-qr.pdf')}>Etiquetas QR PDF</button></nav>
+    <section className="catalogTools"><h2>Catálogo Excel o CSV</h2><div className="exports"><button onClick={() => downloadFile('/catalogo/plantilla.xlsx', 'plantilla-catalogo.xlsx')}>Descargar plantilla</button><button onClick={() => downloadFile('/catalogo/ejemplo.xlsx', 'catalogo-ejemplo.xlsx')}>Descargar 10 productos de ejemplo</button></div><form className="catalogImport" onSubmit={importCatalog}><label>Importar productos<input type="file" accept=".xlsx,.xlsm,.csv" onChange={e => setCatalogFile(e.target.files?.[0] || null)} required/></label><button className="primary" disabled={busy || !catalogFile}>{busy ? 'Procesando…' : 'Importar archivo'}</button></form>{importResult && <div className="importReport" role="status"><strong>Productos importados: {importResult.insertados}</strong>{importResult.errores.length > 0 && <><p>Filas con error: {importResult.errores.length}</p><ul>{importResult.errores.slice(0, 20).map(item => <li key={`${item.fila}-${item.error}`}>Fila {item.fila}: {item.error}</li>)}</ul>{importResult.errores.length > 20 && <p>Se muestran los primeros 20 errores.</p>}{importResult.reporte_csv && <button onClick={() => downloadErrorReport(importResult.reporte_csv)}>Descargar reporte CSV</button>}</>}</div>}</section>
     {data && <>
       <section className="statrow">{Object.entries(data.conteos).map(([key, value]) => <article key={key} className={`stat ${key.toLowerCase()}`}><strong>{value}</strong><span>{key}</span></article>)}</section>
       <section className="dashgrid">
